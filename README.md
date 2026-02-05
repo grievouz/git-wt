@@ -1,4 +1,4 @@
-# Git Worktree Manager
+# git-wt
 
 ```
 Usage: git-wt [BRANCH] [COMMAND]
@@ -20,35 +20,9 @@ Options:
   -h, --help  Print help
 ```
 
-## Installation
-
-### Using Cargo (Linux/macOS/Windows)
-
-```sh
-cargo install git-wt
-```
-
-Then [set up your shell](#shell-setup) (optional).
-
-### Build from source
-
-```sh
-git clone https://github.com/grievouz/git-wt.git
-cd git-wt
-cargo build --release
-```
-
-Place the binary from `target/release/git-wt` on your `PATH`, then [set up your shell](#shell-setup) (optional).
-
-### Using a release binary
-
-- Download the [latest release](https://github.com/grievouz/git-wt/releases) for your system
-- Put the binary on your `PATH`
-- [Set up your shell](#shell-setup) (optional)
-
 ## Shell setup
 
-To use `git wt` instead of `git-wt`, run the appropriate command for your shell and add the output to your config. Without it, switching branches won't work.
+Set up shell integration to enable the `git wt` subcommand and seamless directory switching.
 
 ### Bash
 
@@ -68,19 +42,11 @@ eval "$(git-wt init zsh)"
 
 ### Fish
 
-Create `~/.config/fish/conf.d/git-wt.fish` (or add to an existing config) and run:
+Add to your `~/.config/fish/config.fish`:
 
 ```sh
 git-wt init fish | source
 ```
-
-Or add this line to the file:
-
-```sh
-git-wt init fish | source
-```
-
-Without shell setup you can still use `git-wt` directly; you just won’t have the `git wt` alias or auto-cd after clone.
 
 ## Contributing
 
