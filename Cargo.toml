@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
-crossterm = "0.28"
+crossterm = "0.29"
 nucleo-matcher = "0.3"
 inquire = "0.9"
 color-eyre = "0.6.5"
