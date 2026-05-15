@@ -70,3 +70,55 @@ jobs:
           tar: all
           zip: windows
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  update-homebrew-tap:
+    name: Update Homebrew tap
+    needs: upload-assets
+    if: github.repository_owner == 'grievouz'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v6
+        with:
+          repository: grievouz/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          persist-credentials: true
+
+      - name: Bump formula
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          V="${VERSION_TAG#v}"
+          TMP=$(mktemp -d)
+
+          gh release download "$VERSION_TAG" -R grievouz/git-wt \
+            -p 'git-wt-aarch64-apple-darwin.tar.gz' \
+            -p 'git-wt-x86_64-apple-darwin.tar.gz' \
+            -p 'git-wt-aarch64-unknown-linux-gnu.tar.gz' \
+            -p 'git-wt-x86_64-unknown-linux-gnu.tar.gz' \
+            -D "$TMP"
+
+          FORMULA=Formula/git-wt.rb
+
+          sed -i -E "s|^( *version )\"[^\"]+\"|\\1\"$V\"|" "$FORMULA"
+
+          update_sha() {
+            local asset=$1
+            local sha
+            sha=$(sha256sum "$TMP/$asset" | cut -d' ' -f1)
+            # Find the url line for $asset, then replace sha256 on the next line
+            sed -i -E "\|$asset\"\$|{n;s|sha256 \"[a-f0-9]+\"|sha256 \"$sha\"|;}" "$FORMULA"
+          }
+
+          update_sha git-wt-aarch64-apple-darwin.tar.gz
+          update_sha git-wt-x86_64-apple-darwin.tar.gz
+          update_sha git-wt-aarch64-unknown-linux-gnu.tar.gz
+          update_sha git-wt-x86_64-unknown-linux-gnu.tar.gz
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$FORMULA"
+          git commit -m "git-wt $V"
+          git push
