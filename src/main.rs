@@ -27,7 +27,7 @@ const FISH_WT_ALIAS: &str = include_str!("../shell/fish_wt.fish");
 
 #[derive(Parser)]
 #[command(name = "git-wt", version = concat!(
-    "version ", env!("CARGO_PKG_VERSION"), "\n",
+    "version ", env!("CARGO_PKG_VERSION"), " (", env!("GIT_WT_BUILD_DATE"), ")\n",
     "https://github.com/grievouz/git-wt/releases/tag/v", env!("CARGO_PKG_VERSION")
 ))]
 #[command(about = None, long_about = None)]
