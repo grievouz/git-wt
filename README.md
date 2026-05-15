@@ -1,9 +1,9 @@
 # git-wt
 
 ```
-Usage: git-wt [BRANCH] [COMMAND]
+usage: git-wt [BRANCH] [COMMAND]
 
-Commands:
+commands:
   init    Print shell integration script (e.g. git-wt init fish | source)
   clone   Clone a repository with bare worktree structure
   fetch   Fetch from origin with prune
@@ -11,13 +11,14 @@ Commands:
   rm      Remove a worktree
   switch  Switch to a worktree by branch name
   pull    Pull changes in a worktree
-  help    Print this message or the help of the given subcommand(s)
-
-Arguments:
-  [BRANCH]  Branch name to switch to (when no subcommand is provided)
+  prune   Delete local branches whose remote tracking branch is gone
+  list    List all worktrees
 
 Options:
   -h, --help  Print help
+
+arguments:
+  [BRANCH]  Branch name to switch to (when no subcommand is provided)
 ```
 
 ## Installation
