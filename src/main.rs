@@ -26,16 +26,24 @@ const FISH_INTEGRATION: &str = include_str!("../shell/fish.fish");
 const FISH_WT_ALIAS: &str = include_str!("../shell/fish_wt.fish");
 
 #[derive(Parser)]
-#[command(name = "git-wt")]
+#[command(name = "git-wt", version = concat!(
+    "version ", env!("CARGO_PKG_VERSION"), "\n",
+    "https://github.com/grievouz/git-wt/releases/tag/v", env!("CARGO_PKG_VERSION")
+))]
 #[command(about = None, long_about = None)]
 #[command(
     help_template = "usage: {usage}\n\n{all-args}{after-help}",
     subcommand_help_heading = "commands",
-    disable_help_subcommand = true
+    disable_help_subcommand = true,
+    disable_version_flag = true
 )]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// Print version
+    #[arg(short = 'v', long = "version", action = clap::ArgAction::Version)]
+    version: Option<bool>,
 
     /// Branch name to switch to (when no subcommand is provided)
     #[arg(help_heading = "arguments")]
