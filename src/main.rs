@@ -2,9 +2,7 @@
 
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
-use inquire::ui::{
-    Attributes, Color as InquireColor, ErrorMessageRenderConfig, RenderConfig, StyleSheet, Styled,
-};
+use inquire::ui::{Attributes, ErrorMessageRenderConfig, RenderConfig, StyleSheet, Styled};
 use inquire::{Confirm, Select};
 use nucleo_matcher::pattern::{Atom, AtomKind, CaseMatching, Normalization};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
@@ -166,19 +164,21 @@ fn fatal(message: &str) -> ! {
 }
 
 fn create_select_render_config() -> RenderConfig<'static> {
+    // Reverse video for the selected row. Inquire only supports BOLD/ITALIC
+    // as attributes, so we inject raw SGR codes via the prefix strings:
+    // ESC[7m enables reverse video, ESC[27m disables it. The non-highlighted
+    // prefix ("\x1b[27m ") runs before every other row, so reverse never
+    // bleeds past the selected line.
     RenderConfig {
         prompt_prefix: Styled::new("select:"),
-        highlighted_option_prefix: Styled::new(">"),
+        unhighlighted_option_prefix: Styled::new("\x1b[27m "),
+        highlighted_option_prefix: Styled::new("\x1b[7m>"),
         answered_prompt_prefix: Styled::new("select:"),
         prompt: StyleSheet::new(),
         help_message: StyleSheet::new(),
         answer: StyleSheet::new().with_attr(Attributes::BOLD),
-        option: StyleSheet::new(), //.with_fg(InquireColor::DarkGrey),
-        selected_option: Some(
-            StyleSheet::new()
-                .with_fg(InquireColor::Black)
-                .with_bg(InquireColor::White),
-        ),
+        option: StyleSheet::new(),
+        selected_option: None,
         ..Default::default()
     }
 }
