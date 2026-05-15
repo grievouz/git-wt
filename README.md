@@ -15,7 +15,8 @@ commands:
   list    List all worktrees
 
 Options:
-  -h, --help  Print help
+  -v, --version  Print version
+  -h, --help     Print help
 
 arguments:
   [BRANCH]  Branch name to switch to (when no subcommand is provided)
