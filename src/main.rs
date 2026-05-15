@@ -69,6 +69,9 @@ enum Commands {
         /// Create branch from this ref (defaults to origin/branch)
         #[arg(short, long)]
         from: Option<String>,
+        /// Switch into the new worktree after creating it
+        #[arg(short = 'c', long)]
+        cd: bool,
     },
     /// Remove a worktree
     #[command(alias = "remove")]
@@ -108,7 +111,7 @@ fn main() -> Result<()> {
         Some(Commands::Init { shell, alias }) => init_shell_integration(shell, alias)?,
         Some(Commands::Clone { url, name }) => clone_bare_for_worktrees(&url, name.as_deref())?,
         Some(Commands::Fetch) => fetch_with_prune()?,
-        Some(Commands::Add { branch, from }) => add_worktree(&branch, from.as_deref())?,
+        Some(Commands::Add { branch, from, cd }) => add_worktree(&branch, from.as_deref(), cd)?,
         Some(Commands::Rm { branch, force }) => remove_worktree(branch.as_deref(), force)?,
         Some(Commands::Switch { branch }) => switch_to_worktree(&branch)?,
         Some(Commands::Pull { branch }) => pull_worktree(branch.as_deref())?,
@@ -291,7 +294,7 @@ fn get_worktree_root() -> Result<PathBuf> {
     Ok(root)
 }
 
-fn add_worktree(branch: &str, from: Option<&str>) -> Result<()> {
+fn add_worktree(branch: &str, from: Option<&str>, cd: bool) -> Result<()> {
     check_worktree_setup()?;
     let root = get_worktree_root()?;
     let worktree_path = root.join(branch);
@@ -348,6 +351,10 @@ fn add_worktree(branch: &str, from: Option<&str>) -> Result<()> {
             ],
             None,
         )?;
+    }
+
+    if cd {
+        println!("CD:{}", worktree_path.display());
     }
 
     Ok(())
