@@ -45,14 +45,14 @@ Download a release tarball from the [Releases page](https://github.com/grievouz/
 
 > If you installed via Homebrew, the formula handles it. These instructions are for `cargo install` / manual installs.
 
-Set up shell integration to enable the `git wt` subcommand and seamless directory switching.
+Set up shell integration to enable the `git wt` subcommand seamless directory switching. Pass `--alias` to also define a standalone `wt` function; drop it if you only want `git wt`.
 
 ### Bash
 
 Add to your `.bashrc`:
 
 ```sh
-eval "$(git-wt init bash)"
+eval "$(git-wt init bash --alias)"
 ```
 
 ### Zsh
@@ -60,7 +60,7 @@ eval "$(git-wt init bash)"
 Add to your `.zshrc`:
 
 ```sh
-eval "$(git-wt init zsh)"
+eval "$(git-wt init zsh --alias)"
 ```
 
 ### Fish
@@ -68,7 +68,7 @@ eval "$(git-wt init zsh)"
 Add to your `~/.config/fish/config.fish`:
 
 ```sh
-git-wt init fish | source
+git-wt init fish --alias | source
 ```
 
 ## Contributing
