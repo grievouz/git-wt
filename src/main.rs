@@ -1,11 +1,10 @@
 #![warn(clippy::all, clippy::pedantic)]
 
+use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
-use color_eyre::eyre::ContextCompat;
-use color_eyre::{Result, eyre::Context};
-use crossterm::ExecutableCommand;
-use crossterm::style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor};
-use inquire::ui::{Attributes, Color as InquireColor, RenderConfig, StyleSheet, Styled};
+use inquire::ui::{
+    Attributes, Color as InquireColor, ErrorMessageRenderConfig, RenderConfig, StyleSheet, Styled,
+};
 use inquire::{Confirm, Select};
 use nucleo_matcher::pattern::{Atom, AtomKind, CaseMatching, Normalization};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
@@ -22,16 +21,24 @@ enum Shell {
 }
 
 const BASH_INTEGRATION: &str = include_str!("../shell/bash.sh");
+const BASH_WT_ALIAS: &str = include_str!("../shell/bash_wt.sh");
 const FISH_INTEGRATION: &str = include_str!("../shell/fish.fish");
+const FISH_WT_ALIAS: &str = include_str!("../shell/fish_wt.fish");
 
 #[derive(Parser)]
 #[command(name = "git-wt")]
 #[command(about = None, long_about = None)]
+#[command(
+    help_template = "usage: {usage}\n\n{all-args}{after-help}",
+    subcommand_help_heading = "commands",
+    disable_help_subcommand = true
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
     /// Branch name to switch to (when no subcommand is provided)
+    #[arg(help_heading = "arguments")]
     branch: Option<String>,
 }
 
@@ -42,6 +49,9 @@ enum Commands {
         /// Shell: fish, bash, or zsh
         #[arg(value_enum)]
         shell: Option<Shell>,
+        /// Also register a standalone 'wt' command for fast access
+        #[arg(long)]
+        alias: bool,
     },
     /// Clone a repository with bare worktree structure
     Clone {
@@ -80,20 +90,29 @@ enum Commands {
         /// Branch name of the worktree to pull (defaults to current worktree)
         branch: Option<String>,
     },
+    /// Delete local branches whose remote tracking branch is gone
+    Prune {
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// List all worktrees
+    #[command(alias = "ls")]
+    List,
 }
 
 fn main() -> Result<()> {
-    color_eyre::install()?;
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Init { shell }) => init_shell_integration(shell)?,
+        Some(Commands::Init { shell, alias }) => init_shell_integration(shell, alias)?,
         Some(Commands::Clone { url, name }) => clone_bare_for_worktrees(&url, name.as_deref())?,
         Some(Commands::Fetch) => fetch_with_prune()?,
         Some(Commands::Add { branch, from }) => add_worktree(&branch, from.as_deref())?,
         Some(Commands::Rm { branch, force }) => remove_worktree(branch.as_deref(), force)?,
         Some(Commands::Switch { branch }) => switch_to_worktree(&branch)?,
         Some(Commands::Pull { branch }) => pull_worktree(branch.as_deref())?,
+        Some(Commands::Prune { yes }) => prune_branches(yes)?,
         None => {
             // No subcommand provided, check for branch argument
             if let Some(branch) = cli.branch {
@@ -104,51 +123,46 @@ fn main() -> Result<()> {
                 process::exit(1);
             }
         }
+        Some(Commands::List) => list_worktrees()?,
     }
 
     Ok(())
 }
 
-fn init_shell_integration(shell: Option<Shell>) -> Result<()> {
+fn init_shell_integration(shell: Option<Shell>, alias: bool) -> Result<()> {
     let Some(shell) = shell else {
-        eprintln!("Usage: git-wt init <shell> | source");
-        eprintln!("  Shell: fish, bash, zsh");
-        eprintln!("  Example: git-wt init fish | source");
+        eprintln!("usage: git-wt init <shell>");
+        eprintln!("  e.g. git-wt init fish | source");
         process::exit(1);
     };
 
-    let script = match shell {
-        Shell::Fish => FISH_INTEGRATION,
-        Shell::Bash | Shell::Zsh => BASH_INTEGRATION,
+    let (script, alias_script) = match shell {
+        Shell::Fish => (FISH_INTEGRATION, FISH_WT_ALIAS),
+        Shell::Bash | Shell::Zsh => (BASH_INTEGRATION, BASH_WT_ALIAS),
     };
 
     io::stdout().write_all(script.as_bytes())?;
+    if alias {
+        io::stdout().write_all(b"\n")?;
+        io::stdout().write_all(alias_script.as_bytes())?;
+    }
     Ok(())
 }
 
-fn log_info(message: &str) {
-    eprintln!("{message}");
-}
-
-fn log_error(message: &str) {
-    let mut stdout = io::stderr();
-    let _ = stdout
-        .execute(SetBackgroundColor(Color::Red))
-        .and_then(|s| s.execute(SetForegroundColor(Color::Black)))
-        .and_then(|s| s.execute(Print(" ERROR ")))
-        .and_then(|s| s.execute(ResetColor))
-        .and_then(|s| s.execute(Print(format!(" {message}\n"))));
+fn fatal(message: &str) -> ! {
+    eprintln!("fatal: {message}");
+    process::exit(128);
 }
 
 fn create_select_render_config() -> RenderConfig<'static> {
     RenderConfig {
-        prompt_prefix: Styled::new("Select:"),
+        prompt_prefix: Styled::new("select:"),
         highlighted_option_prefix: Styled::new(">"),
-        answered_prompt_prefix: Styled::new("Select:"),
+        answered_prompt_prefix: Styled::new("select:"),
         prompt: StyleSheet::new(),
         help_message: StyleSheet::new(),
         answer: StyleSheet::new().with_attr(Attributes::BOLD),
-        option: StyleSheet::new().with_fg(InquireColor::DarkGrey),
+        option: StyleSheet::new(), //.with_fg(InquireColor::DarkGrey),
         selected_option: Some(
             StyleSheet::new()
                 .with_fg(InquireColor::Black)
@@ -165,6 +179,10 @@ fn create_confirm_render_config(prompt: &str) -> RenderConfig<'_> {
         prompt: StyleSheet::new(),
         help_message: StyleSheet::new(),
         answer: StyleSheet::new().with_attr(Attributes::BOLD),
+        canceled_prompt_indicator: Styled::new("canceled"),
+        error_message: ErrorMessageRenderConfig::empty()
+            .with_prefix(Styled::new("error: "))
+            .with_message(StyleSheet::new()),
         ..Default::default()
     }
 }
@@ -179,36 +197,30 @@ fn run_command(cmd: &str, args: &[&str], cwd: Option<&Path>) -> Result<()> {
 
     let status = command
         .status()
-        .with_context(|| format!("Failed to execute command: {cmd}"))?;
+        .with_context(|| format!("failed to run '{cmd}'"))?;
 
     if !status.success() {
-        log_error("Command failed");
-        process::exit(1);
+        process::exit(status.code().unwrap_or(1));
     }
 
     Ok(())
 }
 
 fn clone_bare_for_worktrees(url: &str, name: Option<&str>) -> Result<()> {
-    let basename = url.rsplit('/').next().context("Invalid URL")?;
+    let basename = url.rsplit('/').next().context("invalid repository URL")?;
     let default_name = basename.trim_end_matches(".git");
     let dir_name = name.unwrap_or(default_name);
 
     if let Err(e) = fs::create_dir(dir_name) {
-        log_error(&format!("Failed to create directory '{dir_name}': {e}"));
-        process::exit(1);
+        fatal(&format!("could not create directory '{dir_name}': {e}"));
     }
 
     let dir_path = PathBuf::from(dir_name);
 
-    log_info(&format!("Cloning {url} into {dir_name}/"));
-
     run_command("git", &["clone", "--bare", url, ".bare"], Some(&dir_path))?;
 
-    // Create .git file pointing to .bare
-    fs::write(dir_path.join(".git"), "gitdir: ./.bare\n").context("Failed to create .git file")?;
+    fs::write(dir_path.join(".git"), "gitdir: ./.bare\n").context("could not create .git file")?;
 
-    // Configure remote origin fetch
     run_command(
         "git",
         &[
@@ -219,34 +231,38 @@ fn clone_bare_for_worktrees(url: &str, name: Option<&str>) -> Result<()> {
         Some(&dir_path),
     )?;
 
-    // Fetch all branches
-    log_info("Fetching branches...");
     run_command("git", &["fetch", "origin"], Some(&dir_path))?;
-
-    log_info("Repository cloned successfully.");
-
-    //let abs_path = std::env::current_dir()?.join(dir_name);
-    //println!("CD:{}", abs_path.display());
 
     Ok(())
 }
 
 fn fetch_with_prune() -> Result<()> {
-    log_info("Fetching from origin with prune...");
-    run_command("git", &["fetch", "origin", "--prune"], None)?;
-    log_info("Fetch completed.");
-    Ok(())
+    run_command("git", &["fetch", "origin", "--prune"], None)
 }
 
-fn check_git_repo() -> Result<()> {
+fn check_worktree_setup() -> Result<()> {
     let output = Command::new("git")
-        .args(["rev-parse", "--git-dir"])
+        .args(["rev-parse", "--git-common-dir"])
         .output()
-        .context("Failed to execute git rev-parse")?;
+        .context("failed to run 'git rev-parse'")?;
 
     if !output.status.success() {
-        log_error("Not in a git repository");
-        process::exit(1);
+        fatal("not a git repository (or any of the parent directories)");
+    }
+
+    let common_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let common_path = PathBuf::from(&common_dir)
+        .canonicalize()
+        .context("could not resolve git common directory")?;
+
+    let Some(root) = common_path.parent() else {
+        fatal("could not determine worktree root");
+    };
+
+    if !root.join(".git").is_file() {
+        eprintln!("fatal: not a worktree checkout");
+        eprintln!("hint: use 'git-wt clone <url>' to create a worktree-based checkout");
+        process::exit(128);
     }
 
     Ok(())
@@ -257,11 +273,10 @@ fn get_worktree_root() -> Result<PathBuf> {
     let output = Command::new("git")
         .args(["rev-parse", "--git-common-dir"])
         .output()
-        .context("Failed to execute git rev-parse")?;
+        .context("failed to run 'git rev-parse'")?;
 
     if !output.status.success() {
-        log_error("Not in a git repository");
-        process::exit(1);
+        fatal("not a worktree checkout");
     }
 
     let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -270,27 +285,21 @@ fn get_worktree_root() -> Result<PathBuf> {
     // Get the parent directory (where worktrees are siblings)
     let root = git_path
         .parent()
-        .context("Could not determine worktree root")?
+        .context("could not determine worktree root")?
         .to_path_buf();
 
     Ok(root)
 }
 
 fn add_worktree(branch: &str, from: Option<&str>) -> Result<()> {
-    check_git_repo()?;
+    check_worktree_setup()?;
     let root = get_worktree_root()?;
     let worktree_path = root.join(branch);
 
-    // Check if worktree already exists
     if worktree_path.exists() {
-        log_error(&format!(
-            "Directory '{}' already exists",
-            worktree_path.display()
-        ));
-        process::exit(1);
+        fatal(&format!("'{}' already exists", worktree_path.display()));
     }
 
-    // Check if branch exists locally
     let branch_exists = Command::new("git")
         .args(["rev-parse", "--verify", &format!("refs/heads/{branch}")])
         .output()
@@ -300,14 +309,11 @@ fn add_worktree(branch: &str, from: Option<&str>) -> Result<()> {
     let default_ref = format!("origin/{branch}");
     let base_ref = from.unwrap_or(&default_ref);
 
-    // Check if the base ref exists
     let base_ref_exists = Command::new("git")
         .args(["rev-parse", "--verify", base_ref])
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false);
-
-    log_info(&format!("Creating worktree '{branch}'..."));
 
     if branch_exists {
         run_command(
@@ -316,7 +322,6 @@ fn add_worktree(branch: &str, from: Option<&str>) -> Result<()> {
             None,
         )?;
     } else if base_ref_exists {
-        // Branch doesn't exist but base ref does, create from it
         run_command(
             "git",
             &[
@@ -330,9 +335,7 @@ fn add_worktree(branch: &str, from: Option<&str>) -> Result<()> {
             None,
         )?;
     } else {
-        log_info(&format!(
-            "Note: {base_ref} doesn't exist, creating from HEAD"
-        ));
+        eprintln!("hint: '{base_ref}' not found, using HEAD");
         run_command(
             "git",
             &[
@@ -347,10 +350,6 @@ fn add_worktree(branch: &str, from: Option<&str>) -> Result<()> {
         )?;
     }
 
-    log_info("Worktree created.");
-
-    //println!("CD:{}", worktree_path.display());
-
     Ok(())
 }
 
@@ -358,7 +357,7 @@ fn get_all_worktrees() -> Result<Vec<(String, String)>> {
     let output = Command::new("git")
         .args(["worktree", "list", "--porcelain"])
         .output()
-        .context("Failed to execute git worktree list")?;
+        .context("failed to run 'git worktree list'")?;
 
     if !output.status.success() {
         return Ok(Vec::new());
@@ -436,7 +435,7 @@ fn find_worktree_path(branch: &str) -> Result<Option<String>> {
         .collect();
     let branch_names: Vec<String> = options.iter().map(|(name, _)| name.clone()).collect();
 
-    eprintln!("'{branch}' matches multiple worktrees.");
+    eprintln!("hint: '{branch}' matched multiple worktrees");
     let selection = Select::new("", branch_names)
         .with_page_size(10)
         .with_render_config(create_select_render_config())
@@ -451,7 +450,6 @@ fn find_worktree_path(branch: &str) -> Result<Option<String>> {
         }
         Ok(None)
     } else {
-        eprintln!("Cancelled.");
         process::exit(0);
     }
 }
@@ -473,7 +471,7 @@ fn get_current_worktree_branch() -> Result<Option<String>> {
 }
 
 fn remove_worktree(branch: Option<&str>, force: bool) -> Result<()> {
-    check_git_repo()?;
+    check_worktree_setup()?;
 
     let branch = match branch {
         Some(b) => b.to_string(),
@@ -481,8 +479,7 @@ fn remove_worktree(branch: Option<&str>, force: bool) -> Result<()> {
             if let Some(b) = get_current_worktree_branch()? {
                 b
             } else {
-                log_error("Could not determine current worktree branch");
-                process::exit(1);
+                fatal("unable to determine current worktree branch");
             }
         }
     };
@@ -490,15 +487,12 @@ fn remove_worktree(branch: Option<&str>, force: bool) -> Result<()> {
     let worktree_path = find_worktree_path(&branch)?;
 
     if worktree_path.is_none() {
-        log_error(&format!("Worktree for branch '{branch}' not found"));
-        process::exit(1);
+        fatal(&format!("worktree '{branch}' not found"));
     }
 
     let confirmed = Confirm::new("")
         .with_default(false)
-        .with_render_config(create_confirm_render_config(
-            "Are you sure you want to remove the worktree?",
-        ))
+        .with_render_config(create_confirm_render_config("remove worktree?"))
         .prompt_skippable();
 
     if !matches!(confirmed, Ok(Some(true))) {
@@ -514,26 +508,23 @@ fn remove_worktree(branch: Option<&str>, force: bool) -> Result<()> {
 
     run_command("git", &args, None)?;
 
-    log_info(format!("Worktree '{}' removed.", &branch).as_str());
-
     Ok(())
 }
 
 fn switch_to_worktree(branch: &str) -> Result<()> {
-    check_git_repo()?;
+    check_worktree_setup()?;
     let worktree_path = find_worktree_path(branch)?;
 
     if let Some(path) = worktree_path {
         println!("CD:{path}");
         Ok(())
     } else {
-        log_error(&format!("Worktree for branch '{branch}' not found."));
-        process::exit(1);
+        fatal(&format!("worktree '{branch}' not found"));
     }
 }
 
 fn pull_worktree(branch: Option<&str>) -> Result<()> {
-    check_git_repo()?;
+    check_worktree_setup()?;
 
     let branch = match branch {
         Some(b) => b.to_string(),
@@ -541,8 +532,7 @@ fn pull_worktree(branch: Option<&str>) -> Result<()> {
             if let Some(b) = get_current_worktree_branch()? {
                 b
             } else {
-                log_error("Could not determine current worktree branch");
-                process::exit(1);
+                fatal("unable to determine current worktree branch");
             }
         }
     };
@@ -550,16 +540,106 @@ fn pull_worktree(branch: Option<&str>) -> Result<()> {
     let worktree_path = find_worktree_path(&branch)?;
 
     if worktree_path.is_none() {
-        log_error(&format!("Worktree for branch '{branch}' not found"));
-        process::exit(1);
+        fatal(&format!("worktree '{branch}' not found"));
     }
 
     let worktree_path = worktree_path.unwrap();
     let worktree_path_buf = PathBuf::from(&worktree_path);
 
-    log_info(&format!("Pulling changes in worktree '{branch}'..."));
-    run_command("git", &["pull"], Some(&worktree_path_buf))?;
-    log_info("Pull completed.");
+    run_command("git", &["pull"], Some(&worktree_path_buf))
+}
+
+fn get_gone_branches() -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .args([
+            "for-each-ref",
+            "--format=%(refname:short) %(upstream:track)",
+            "refs/heads",
+        ])
+        .output()
+        .context("failed to list branches")?;
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let gone_branches: Vec<String> = output_str
+        .lines()
+        .filter(|line| line.contains("[gone]"))
+        .filter_map(|line| line.split_whitespace().next())
+        .map(String::from)
+        .collect();
+
+    Ok(gone_branches)
+}
+
+fn prune_branches(skip_confirm: bool) -> Result<()> {
+    check_worktree_setup()?;
+
+    run_command("git", &["fetch", "origin", "--prune"], None)?;
+
+    let gone_branches = get_gone_branches()?;
+
+    if gone_branches.is_empty() {
+        eprintln!("nothing to prune");
+        return Ok(());
+    }
+
+    let worktrees = get_all_worktrees()?;
+    let worktree_branches: Vec<&str> = worktrees.iter().map(|(b, _)| b.as_str()).collect();
+
+    eprintln!("branches with gone upstream:");
+    for branch in &gone_branches {
+        let has_worktree = worktree_branches.contains(&branch.as_str());
+        if has_worktree {
+            eprintln!("  {branch} (has worktree)");
+        } else {
+            eprintln!("  {branch}");
+        }
+    }
+
+    if !skip_confirm {
+        let confirmed = Confirm::new("")
+            .with_default(false)
+            .with_render_config(create_confirm_render_config("Delete these branches?"))
+            .prompt_skippable();
+
+        if !matches!(confirmed, Ok(Some(true))) {
+            process::exit(0);
+        }
+    }
+
+    for branch in &gone_branches {
+        if let Some((_, path)) = worktrees.iter().find(|(b, _)| b == branch) {
+            run_command("git", &["worktree", "remove", "--force", path], None)?;
+        }
+
+        run_command("git", &["branch", "-D", branch], None)?;
+    }
+
+    Ok(())
+}
+
+fn list_worktrees() -> Result<()> {
+    check_worktree_setup()?;
+
+    let worktrees = get_all_worktrees()?;
+
+    if worktrees.is_empty() {
+        return Ok(());
+    }
+
+    let current_branch = get_current_worktree_branch()?;
+
+    for (branch, _path) in &worktrees {
+        let marker = if current_branch.as_deref() == Some(branch.as_str()) {
+            "* "
+        } else {
+            "  "
+        };
+        println!("{marker}{branch}");
+    }
 
     Ok(())
 }
