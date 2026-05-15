@@ -20,7 +20,29 @@ Options:
   -h, --help  Print help
 ```
 
+## Installation
+
+### Homebrew (macOS and Linux)
+
+```sh
+brew install grievouz/tap/git-wt
+```
+
+### Cargo
+
+```sh
+cargo install --git https://github.com/grievouz/git-wt
+```
+
+Then follow the [Shell setup](#shell-setup) section below.
+
+### Prebuilt binaries
+
+Download a release tarball from the [Releases page](https://github.com/grievouz/git-wt/releases), place `git-wt` on your `PATH`, and follow the [Shell setup](#shell-setup) section below.
+
 ## Shell setup
+
+> If you installed via Homebrew, the formula handles it. These instructions are for `cargo install` / manual installs.
 
 Set up shell integration to enable the `git wt` subcommand and seamless directory switching.
 
