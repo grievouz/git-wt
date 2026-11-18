@@ -32,9 +32,9 @@ jobs:
           - target: aarch64-unknown-linux-musl
             os: ubuntu-22.04
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-15
           - target: x86_64-apple-darwin
-            os: macos-14
+            os: macos-15-intel
           - target: aarch64-pc-windows-msvc
             os: windows-2022
           - target: x86_64-unknown-linux-gnu
@@ -47,6 +47,15 @@ jobs:
             os: ubuntu-22.04
     timeout-minutes: 60
     steps:
+      - name: Verify native macOS architecture
+        if: endsWith(matrix.target, '-apple-darwin')
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          case "$TARGET:$(uname -m)" in
+            aarch64-apple-darwin:arm64|x86_64-apple-darwin:x86_64) ;;
+            *) echo "::error::macOS runner architecture does not match $TARGET"; exit 1 ;;
+          esac
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
