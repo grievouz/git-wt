@@ -1,0 +1,70 @@
+name: Native macOS smoke
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/macos-smoke.yaml
+      - .github/workflows/release.yaml
+      - Cargo.toml
+      - Cargo.lock
+      - build.rs
+      - src/**
+      - shell/**
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
+  RUSTUP_MAX_RETRIES: 10
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  native-build:
+    name: Native build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Verify native macOS architecture
+        run: |
+          case "$TARGET:$(uname -m)" in
+            aarch64-apple-darwin:arm64|x86_64-apple-darwin:x86_64) ;;
+            *) echo "::error::macOS runner architecture does not match $TARGET"; exit 1 ;;
+          esac
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Verify native Rust toolchain
+        run: |
+          rustc -vV | grep -Fx "host: $TARGET"
+      - name: Build release binary
+        run: cargo build --locked --release --target "$TARGET"
+      - name: Validate and run native binary
+        run: |
+          binary="target/$TARGET/release/git-wt"
+          file "$binary"
+          binary_arch="$(lipo -archs "$binary")"
+          test "$binary_arch" = "$(uname -m)"
+          "$binary" --version
+          "$binary" --help > /dev/null
